@@ -254,7 +254,19 @@ dl.kv dd{margin:0; font-variant-numeric:tabular-nums}
   background:var(--ink); color:var(--bg); font-size:13.5px; padding:11px 17px; border-radius:5px;
   box-shadow:0 8px 28px rgba(0,0,0,.28); opacity:0; pointer-events:none; transition:opacity .16s;}
 #toast.on{opacity:1}
-footer.foot{border-top:1px solid var(--line); margin-top:34px; padding:16px 0 40px; color:var(--ink-3); font-size:12.5px}
+footer.foot{border-top:1px solid var(--line); margin-top:34px; padding-block:16px 40px; color:var(--ink-3); font-size:12.5px;
+  display:flex; flex-wrap:wrap; align-items:center; gap:10px 24px;}
+/* acceso al modo editor: discreto, al pie */
+.footadmin{margin-left:auto; display:inline-flex; align-items:center; gap:10px; flex-wrap:wrap;}
+.linkbtn{background:none; border:0; padding:2px 0; font-family:var(--body); font-size:12px; color:var(--ink-3);
+  cursor:pointer; text-decoration:underline; text-decoration-color:transparent; text-underline-offset:3px;
+  transition:color .12s, text-decoration-color .12s;}
+.linkbtn:hover{color:var(--ink-2); text-decoration-color:currentColor;}
+.linkbtn.on{color:var(--brand);}
+.foot .gate input{width:130px; font-size:12px; padding:4px 8px; color:var(--ink); background:var(--surface);
+  border:1px solid var(--line-2); border-radius:3px;}
+.foot .gate input::placeholder{color:var(--ink-3)}
+.foot .gate .err{color:var(--neg)}
 @media (prefers-reduced-motion: reduce){*{transition:none !important}}
 @media (max-width:640px){ .brand h1{font-size:21px} .stat{flex-basis:50%} .wrap{padding:0 14px} }
 </style>
@@ -268,13 +280,6 @@ footer.foot{border-top:1px solid var(--line); margin-top:34px; padding:16px 0 40
     <div class="topmeta">
       <span class="chip">Corte <b id="cCorte">—</b></span>
       <span class="chip">Valor libre util. <b id="cValor">—</b></span>
-      <span class="chip" id="cRole">Solo lectura</span>
-      <button class="viewbtn" id="btnAdmin" type="button">Modo editor</button>
-      <span class="gate hide" id="gate">
-        <input type="password" id="pw" placeholder="Clave" autocomplete="off">
-        <button class="viewbtn" id="pwGo" type="button">Entrar</button>
-        <span class="err hide" id="pwErr">Clave incorrecta</span>
-      </span>
     </div>
   </div>
 </header>
@@ -537,8 +542,16 @@ footer.foot{border-top:1px solid var(--line); margin-top:34px; padding:16px 0 40
 
 </main>
 <footer class="wrap foot">
-  Stock PDI · PA Perú · Centro L003. Valores en soles (PEN) sobre <em>Valor libre util.</em> de SAP.
-  <span id="footStamp"></span>
+  <span>Stock PDI · PA Perú · Centro L003. Valores en soles (PEN) sobre <em>Valor libre util.</em> de SAP.
+  <span id="footStamp"></span></span>
+  <span class="footadmin">
+    <button class="linkbtn" id="btnAdmin" type="button">Modo editor</button>
+    <span class="gate hide" id="gate">
+      <input type="password" id="pw" placeholder="Clave" autocomplete="off" aria-label="Clave del modo editor">
+      <button class="linkbtn" id="pwGo" type="button">Entrar</button>
+      <span class="err hide" id="pwErr">Clave incorrecta</span>
+    </span>
+  </span>
 </footer>
 
 <div id="toast" role="status" aria-live="polite"></div>
@@ -786,8 +799,7 @@ function setAdmin(on){
   ST.admin=on;
   $("#tabIng").classList.toggle("hide",!on);
   $("#thrCtl").classList.toggle("hide",!on);
-  $("#cRole").textContent = on ? "Modo editor" : "Solo lectura";
-  $("#btnAdmin").textContent = on ? "Salir" : "Modo editor";
+  $("#btnAdmin").textContent = on ? "Salir del modo editor" : "Modo editor";
   $("#btnAdmin").classList.toggle("on",on);
   $("#gate").classList.add("hide");
   if(!on && $("#p-ing").classList.contains("on")) show("rep");
