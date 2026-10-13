@@ -1631,6 +1631,22 @@ async function ghPublicar(c, archivos, mensaje, avance){
   return commit.sha;
 }
 
+/* si lo publicado tiene un corte más reciente que el de esta pestaña (por ejemplo, una pestaña
+   abierta hace días), se conserva el publicado: la fecha de corte nunca retrocede */
+async function noRetroceder(nd){
+  var j;
+  try{ j=await fetch("data/base.json?t="+Date.now(),{cache:"no-store"}).then(function(r){ return r.json(); }); }
+  catch(e){ return; }
+  var m=(j&&j.meta)||{}, pub=(m.stockDate||"")+" "+(m.stockTime||""),
+      mio=(nd.meta.stockDate||"")+" "+(nd.meta.stockTime||"");
+  if(pub<=mio) return;
+  nd.stock=j.stock||nd.stock;
+  ["stockFile","stockDate","stockTime"].forEach(function(k){ nd.meta[k]=m[k]; });
+  nd.hist=Object.assign({}, nd.hist, j.hist||{});
+  nd.histT=Object.assign({}, nd.histT, j.histT||{});
+  nd.mats=Object.assign({}, j.mats||{}, nd.mats);
+}
+
 /* arma el conjunto de datos nuevo a partir de lo cargado, sin tocar nada todavía */
 function armar(){
   var nd={meta:Object.assign({},D.meta), mats:Object.assign({},D.mats), stock:D.stock, mov:D.mov,
@@ -1712,6 +1728,7 @@ $("#btnPub").addEventListener("click",async function(){
 
     /* alojada: si hay conexión con GitHub se sube sola; si no, se descargan los archivos */
     if(!ST.art){
+      await noRetroceder(a.nd);
       var archivos=datosComoArchivos(a.nd);
       var c=ghCfg();
       if(ghListo(c)){
