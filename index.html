@@ -451,6 +451,12 @@ footer.foot{border-top:1px solid var(--line); margin-top:34px; padding-block:16p
       <input type="file" id="fileO" accept=".xlsx,.xlsm,.xls">
       <div class="state" id="stO">Sin archivo seleccionado.</div>
     </div>
+    <div class="drop" id="dropZ">
+      <h3>Export ZPM010 · ODM padre <span class="badge">cruce</span></h3>
+      <div class="hint">ZPM010_OBRAS_ODM_EXPORT · ODM Padre · ODM Hija</div>
+      <input type="file" id="fileZ" accept=".xlsx,.xlsm,.xls">
+      <div class="state" id="stZ">Sin archivo seleccionado.</div>
+    </div>
   </div>
 
   <div class="panelcard">
@@ -523,6 +529,7 @@ footer.foot{border-top:1px solid var(--line); margin-top:34px; padding-block:16p
       <li><b>Materiales de servicio.</b> Toda fila cuyo material empiece con S se descarta, en stock y en movimientos. Abajo de cada archivo se indica cuántas se descartaron.</li>
       <li><b>Stock: reemplaza.</b> Cada corte pisa al anterior; el reporte siempre muestra la foto del último archivo cargado.</li>
       <li><b>Movimientos: acumula.</b> El archivo es el historial exportado, así que solo se agregan las filas que aún no están. Volver a subir el mismo archivo no duplica nada; un archivo con más periodo suma lo nuevo.</li>
+      <li><b>ZPM010: acumula.</b> Del export ZPM010 (ODM Padre · ODM Hija) sale la relación orden → ODM padre: cada archivo agrega las órdenes nuevas y actualiza las que cambiaron de padre. La base de movimientos muestra la columna <b>ODM Padre</b> buscando la Orden de cada movimiento; la propia orden padre apunta a sí misma.</li>
       <li><b>Sin tablas ni formatos.</b> Basta el Excel con la hoja de datos: se busca la fila de encabezados en cualquier hoja, aunque no esté en la fila 1. Si falta una columna, se indica cuál y no se publica nada.</li>
     </ol>
   </div>
@@ -576,6 +583,7 @@ var COLS_M=["Documento material","Fecha contabiliz.","Clase de movimiento","Cent
             "Descripción material","Un.medida de entrada","Ctd.en UM entrada","Impte.mon.local","Orden",
             "Texto clase de mov.","Nombre del usuario","Referencia","Texto cab.documento"];
 var COLS_O=["Orden","Texto breve","Pto.tbjo.responsable"];
+var COLS_Z=["ODM Padre","ODM Hija"];
 var S_MAT=0,S_CEN=1,S_ALM=2,S_ESP=3,S_NESP=4,S_UM=5,S_LIB=6,S_VAL=7;
 var M_DOC=0,M_FEC=1,M_CLS=2,M_CEN=3,M_ALM=4,M_MAT=5,M_UM=6,M_CTD=7,M_IMP=8,
     M_ORD=9,M_TCL=10,M_USR=11,M_REF=12,M_TXT=13,M_ARE=14;
@@ -619,6 +627,7 @@ D.hist=D.hist||{};             // fecha -> totales por almacén (el evolutivo)
 D.histT=D.histT||{};            // fecha -> hora del corte que quedó ese día
 D.ordenes=D.ordenes||{};        // orden -> área
 D.areaDoc=D.areaDoc||{};        // documento -> área ya resuelta (el histórico)
+D.padres=D.padres||{};          // orden -> ODM padre (export ZPM010)
 D.cfg=D.cfg||{};
 /* histórico congelado del SAP anterior (data/historico.json): se lee, se muestra y se descarga,
    pero la ingesta nunca lo toca — ni al acumular, ni al recalcular áreas, ni con "Reemplazar". */
@@ -628,6 +637,8 @@ D.cfg.cabeceras=D.cfg.cabeceras||CFG_DEF.cabeceras;
 D.cfg.claves=D.cfg.claves||CFG_DEF.claves;
 
 function docKey(d){ return String(d==null?"":d).trim().replace(/^0+/,""); }
+/* ODM padre de una orden según el export ZPM010; vacío si la orden no está ahí */
+function padreDe(o){ var k=docKey(o); return k?(D.padres[k]||""):""; }
 function areaDeOrden(puesto, textoBreve, cfg){
   var base=cfg.puestos[String(puesto||"").trim().toUpperCase()]||"";
   if(base!=="PREVENTIVO") return base;
@@ -660,7 +671,7 @@ D.mov.forEach(function(r){ if(r.length<15) r[M_ARE]=r[M_ARE]||""; });
 D.mov=D.mov.filter(function(r){ return claseOk(r[M_CLS]); });
 
 var ST={art:null,dl:null,admin:false,metric:"val",esp:false,
-        repSort:{k:"__tot",d:-1},matSort:{k:0,d:1},movPage:0,pendS:null,pendM:null,pendO:null,
+        repSort:{k:"__tot",d:-1},matSort:{k:0,d:1},movPage:0,pendS:null,pendM:null,pendO:null,pendZ:null,padresListo:EMBEBIDO,
         movListo:EMBEBIDO, movCargando:null, histListo:false, histCargando:null, areasListo:EMBEBIDO, areasCargando:null,
         evolModo:"area", evolSel:[""]};
 
@@ -718,7 +729,7 @@ function cargarMov(){
   ST.movCargando = Promise.all([fetch("data/mov.json",{cache:"no-store"}).then(function(r){
     if(!r.ok) throw new Error("HTTP "+r.status);
     return r.json();
-  }), cargarHist()]).then(function(res){ var j=res[0];
+  }), cargarHist(), cargarPadres()]).then(function(res){ var j=res[0];
     D.mov=(Array.isArray(j)?j:(j.mov||[])).filter(function(r){ return claseOk(r[M_CLS]); });
     D.movH=(D.movH||[]).filter(function(r){ return claseOk(r[M_CLS]); });
     areaPorAlmacen(D.mov);
@@ -754,6 +765,18 @@ function cargarHist(){
   }).catch(function(){ D.movH=[]; D.matsH={}; D.histMeta=null; })
     .then(function(){ ST.histListo=true; ST.histCargando=null; notaMov(); fillMovFilters(); });
   return ST.histCargando;
+}
+/* relación orden -> ODM padre (export ZPM010): viaja con los movimientos. Si el archivo
+   todavía no existe la columna queda vacía; si falla la red, no se deja acumular encima
+   (se publicaría la relación incompleta). */
+function cargarPadres(){
+  if(ST.padresListo) return Promise.resolve();
+  return fetch("data/padres.json",{cache:"no-store"}).then(function(r){
+    if(r.status===404) return {};
+    if(!r.ok) throw new Error("HTTP "+r.status);
+    return r.json();
+  }).then(function(j){ D.padres=(j&&j.padres)||{}; ST.padresListo=true; })
+    .catch(function(){ D.padres=D.padres||{}; });
 }
 /* las tablas de área solo hacen falta para ingestar: se traen aparte */
 function cargarAreas(){
@@ -1183,7 +1206,7 @@ function movFiltered(){
     if(ft&&(r[H_TIP]||"(sin tipo)")!==ft) return false;
     if(d1&&r[M_FEC]<d1) return false;
     if(d2&&r[M_FEC]>d2) return false;
-    if(q&&(r[M_MAT]+" "+desc(r[M_MAT])+" "+r[M_ORD]+" "+r[M_DOC]+" "+r[M_USR]+" "+r[M_REF]+" "+r[M_TXT]+" "+r[M_ARE]+" "+(r[H_TIP]||""))
+    if(q&&(r[M_MAT]+" "+desc(r[M_MAT])+" "+r[M_ORD]+" "+padreDe(r[M_ORD])+" "+r[M_DOC]+" "+r[M_USR]+" "+r[M_REF]+" "+r[M_TXT]+" "+r[M_ARE]+" "+(r[H_TIP]||""))
         .toLowerCase().indexOf(q)<0) return false;
     return true;
   });
@@ -1194,10 +1217,10 @@ function renderMov(){
   var page=rows.slice(ST.movPage*PAGE, ST.movPage*PAGE+PAGE);
   var h='<table class="grid"><thead><tr><th>Documento</th><th>Fecha</th><th>Clase</th><th>Texto clase</th>'+
     '<th>Almacén</th><th>Área</th><th>Material</th><th>Descripción</th><th>UM</th><th class="n">Cantidad</th>'+
-    '<th class="n">Importe S/</th><th>Orden</th><th>Usuario</th><th>Referencia</th><th>Texto cabecera</th>'+
+    '<th class="n">Importe S/</th><th>Orden</th><th>ODM Padre</th><th>Usuario</th><th>Referencia</th><th>Texto cabecera</th>'+
     (tip?'<th>Tipo instalación</th>':'')+'</tr></thead><tbody>';
   page.forEach(function(r){
-    var hi=esHist(r);
+    var hi=esHist(r), pa=padreDe(r[M_ORD]);
     h+='<tr'+(hi?' class="hist" title="Histórico SAP anterior · congelado"':'')+'><td class="c">'+
        (hi?'<span class="lock">HIST</span>':'')+esc(r[M_DOC])+'</td><td class="c">'+fdate(r[M_FEC])+'</td><td class="c">'+esc(r[M_CLS])+
        '</td><td>'+esc(r[M_TCL])+'</td><td class="c">'+esc(r[M_ALM])+'</td>'+
@@ -1207,17 +1230,18 @@ function renderMov(){
        '</td><td class="desc">'+esc(desc(r[M_MAT])||"—")+'</td><td class="c">'+esc(r[M_UM])+
        '</td><td class="n'+(r[M_CTD]<0?" neg":"")+'">'+num(r[M_CTD])+
        '</td><td class="n'+(r[M_IMP]<0?" neg":"")+'">'+moneyC(r[M_IMP])+
-       '</td><td class="c">'+esc(r[M_ORD])+'</td><td class="c">'+esc(r[M_USR])+'</td><td class="c">'+esc(r[M_REF])+
+       '</td><td class="c">'+esc(r[M_ORD])+'</td><td class="c">'+(pa?esc(pa):'<span class="zero">—</span>')+
+       '</td><td class="c">'+esc(r[M_USR])+'</td><td class="c">'+esc(r[M_REF])+
        '</td><td class="desc">'+esc(r[M_TXT])+'</td>'+
        (tip?'<td>'+(r[H_TIP]?esc(r[H_TIP]):'<span class="zero">—</span>')+'</td>':'')+'</tr>';
   });
-  if(!page.length) h+='<tr><td colspan="'+(tip?16:15)+'" class="empty">'+
+  if(!page.length) h+='<tr><td colspan="'+(tip?17:16)+'" class="empty">'+
     ($("#fMovOri").value!=="act"&&!(D.movH&&D.movH.length)
       ? "Este borrador no incluye el histórico del SAP anterior: vive solo en el reporte publicado."
       : "Sin movimientos para el filtro.")+'</td></tr>';
   var ti=0,tc=0; rows.forEach(function(r){ti+=r[M_IMP]; tc+=r[M_CTD];});
   h+='</tbody><tfoot><tr><td colspan="9">Total filtrado</td><td class="n">'+num(tc)+'</td><td class="n">'+
-     moneyC(ti)+'</td><td colspan="'+(tip?5:4)+'"></td></tr></tfoot></table>';
+     moneyC(ti)+'</td><td colspan="'+(tip?6:5)+'"></td></tr></tfoot></table>';
   $("#movBox").innerHTML=h;
   $("#movCount").textContent=rows.length.toLocaleString("en-US")+" movimientos · consumo neto S/ "+moneyC(ti);
   $("#movPager").innerHTML=
@@ -1272,6 +1296,8 @@ function renderCur(){
     "<dt>Archivo movimientos</dt><dd>"+esc(m.movFile||"—")+"</dd>"+
     "<dt>Periodo</dt><dd>"+esc(m.movFrom||"—")+" a "+esc(m.movTo||"—")+"</dd>"+
     "<dt>Movimientos</dt><dd>"+D.mov.length.toLocaleString("en-US")+"</dd>"+
+    "<dt>Archivo ZPM010</dt><dd>"+esc(m.padresFile||"—")+"</dd>"+
+    "<dt>Órdenes con ODM padre</dt><dd>"+(Object.keys(D.padres).length||m.padresN||0).toLocaleString("en-US")+"</dd>"+
     "<dt>Publicado</dt><dd>"+esc(String(m.updatedAt||"—").replace("T"," ").slice(0,16))+" · "+
       esc(m.updatedBy||"—")+"</dd>";
   if(m.stockDate&&!$("#inCorte").value) $("#inCorte").value=m.stockDate;
@@ -1411,6 +1437,28 @@ async function readOrdenes(file){
   if(!n) throw new Error("El export de órdenes no tiene filas utilizables.");
   return {map:map,n:n,sinArea:sinArea,sheet:t.sheet,name:file.name};
 }
+/* export ZPM010 (ODM Padre · ODM Hija): deja orden -> ODM padre. La fila sin hija es la
+   propia orden padre, que se registra apuntando a sí misma. */
+async function readPadres(file){
+  var X=await loadXLSX(), wb=await readWB(X,file);
+  var t=findTable(X,wb,COLS_Z,"ZPM010 (ODM Padre · ODM Hija)");
+  var iP=t.hdr.indexOf("ODM Padre"), iH=t.hdr.indexOf("ODM Hija");
+  var padres={}, hijas={}, dup=0;
+  for(var i=t.row+1;i<t.aoa.length;i++){
+    var a=t.aoa[i]; if(!a) continue;
+    var p=docKey(a[iP]); if(!p) continue;
+    padres[p]=1;
+    var h=docKey(a[iH]); if(!h) continue;
+    if(hijas[h]===undefined) hijas[h]=p;     // la primera coincidencia manda
+    else if(hijas[h]!==p) dup++;
+  }
+  var map={};
+  Object.keys(padres).forEach(function(p){ map[p]=p; });
+  Object.keys(hijas).forEach(function(h){ map[h]=hijas[h]; });
+  var np=Object.keys(padres).length, nh=Object.keys(hijas).length;
+  if(!np) throw new Error("El export ZPM010 no tiene filas utilizables.");
+  return {map:map,np:np,nh:nh,dup:dup,sheet:t.sheet,name:file.name};
+}
 
 /* el historial se acumula: se agrega solo lo que aún no está, respetando repeticiones legítimas */
 function keyOf(r){ return r.slice(0,M_BASE).join("\u001F"); }
@@ -1480,7 +1528,7 @@ function pintarAreaInfo(){
     : "Aún no hay movimientos cargados.";
 }
 function pubReady(){
-  var listo=!!(ST.pendS||ST.pendM||ST.pendO);
+  var listo=!!(ST.pendS||ST.pendM||ST.pendO||ST.pendZ);
   $("#btnPub").disabled=!listo; $("#btnLocal").disabled=!listo; $("#btnBajar").disabled=!listo;
 }
 function pmsg(t,cls){ var m=$("#pubMsg"); m.className="msg "+(cls||""); m.textContent=t; m.classList.remove("hide"); }
@@ -1531,7 +1579,27 @@ $("#fileO").addEventListener("change",async function(){
   }catch(e){ ST.pendO=null; state("#stO",esc(e.message),"bad"); }
   pubReady();
 });
-[["dropS","#fileS"],["dropM","#fileM"],["dropO","#fileO"]].forEach(function(p){
+$("#fileZ").addEventListener("change",async function(){
+  var f=this.files[0]; if(!f)return;
+  state("#stZ","Leyendo archivo…");
+  try{
+    var d=await readPadres(f); ST.pendZ=d;
+    if(!ST.movListo){ state("#stZ","Cargando movimientos para cruzar…"); await cargarMov(); }
+    var nuevas=0, cambian=0;
+    Object.keys(d.map).forEach(function(o){ var v=D.padres[o];
+      if(v===undefined) nuevas++; else if(v!==d.map[o]) cambian++; });
+    var todo=Object.assign({},D.padres,d.map), cruzan=0;
+    D.mov.forEach(function(r){ var k=docKey(r[M_ORD]); if(k&&todo[k]) cruzan++; });
+    state("#stZ","<b>"+esc(f.name)+"</b> · hoja «"+esc(d.sheet)+"»<br>"+
+      d.nh.toLocaleString("en-US")+" órdenes hijas de "+d.np.toLocaleString("en-US")+" ODM padre · "+
+      nuevas.toLocaleString("en-US")+" nuevas"+(cambian?" · "+cambian.toLocaleString("en-US")+" cambian de padre":"")+
+      (d.dup?"<br>"+d.dup.toLocaleString("en-US")+" hijas con más de un padre: se tomó el primero":"")+
+      "<br><span style='color:var(--ink-3)'>Con esto "+cruzan.toLocaleString("en-US")+
+      " movimientos tendrían ODM Padre.</span>","ok");
+  }catch(e){ ST.pendZ=null; state("#stZ",esc(e.message),"bad"); }
+  pubReady();
+});
+[["dropS","#fileS"],["dropM","#fileM"],["dropO","#fileO"],["dropZ","#fileZ"]].forEach(function(p){
   var el=document.getElementById(p[0]), inp=$(p[1]);
   el.addEventListener("dragover",function(e){e.preventDefault(); el.classList.add("over");});
   el.addEventListener("dragleave",function(){el.classList.remove("over");});
@@ -1608,9 +1676,9 @@ async function ghPublicar(c, archivos, mensaje, avance){
   avance(10,"Leyendo el estado del repositorio…");
   var ref=await ghApi(c,"/git/ref/heads/"+encodeURIComponent(c.branch));
   var commitBase=await ghApi(c,"/git/commits/"+ref.object.sha);
-  var blobs=[], i=0;
+  var blobs=[], i=0, total=Object.keys(archivos).length;
   for(var k in archivos){
-    i++; avance(10+i*22, "Subiendo "+k+"…");
+    i++; avance(10+Math.round(i*66/total), "Subiendo "+k+"…");
     var b=await ghApi(c,"/git/blobs",{method:"POST",
       headers:Object.assign({"Content-Type":"application/json"},ghHead(c)),
       body:JSON.stringify({content:b64(archivos[k]), encoding:"base64"})});
@@ -1651,8 +1719,15 @@ async function noRetroceder(nd){
 function armar(){
   var nd={meta:Object.assign({},D.meta), mats:Object.assign({},D.mats), stock:D.stock, mov:D.mov,
           ordenes:Object.assign({},D.ordenes), areaDoc:Object.assign({},D.areaDoc),
-          cfg:leerCfg(), movH:D.movH, matsH:D.matsH, histMeta:D.histMeta}, nuevos=0;
+          cfg:leerCfg(), movH:D.movH, matsH:D.matsH, histMeta:D.histMeta, padres:D.padres}, nuevos=0;
   if(ST.pendO) Object.keys(ST.pendO.map).forEach(function(o){ nd.ordenes[o]=ST.pendO.map[o]; });
+  if(ST.pendZ){
+    /* acumula sobre la relación publicada: sin haberla leído se perderían las órdenes viejas */
+    if(!ST.padresListo) throw new Error("no se pudo leer data/padres.json para acumular el ZPM010. "+
+      "Recarga la página y vuelve a cargar el archivo");
+    nd.padres=Object.assign({},D.padres,ST.pendZ.map);
+    nd.meta.padresFile=ST.pendZ.name; nd.meta.padresN=Object.keys(nd.padres).length;
+  }
   if(ST.pendS){
     nd.stock=ST.pendS.rows;
     nd.meta.stockFile=ST.pendS.name;
@@ -1687,7 +1762,8 @@ function armar(){
   nd.meta.threshold=parseFloat($("#inThr").value)||thr();
   nd.meta.updatedAt=new Date().toISOString().slice(0,16);
   nd.meta.updatedBy=$("#inBy").value.trim()||"Editor";
-  return {nd:nd, nuevos:nuevos, conStock:!!ST.pendS, conMov:!!ST.pendM, conOrd:!!ST.pendO, area:res};
+  return {nd:nd, nuevos:nuevos, conStock:!!ST.pendS, conMov:!!ST.pendM, conOrd:!!ST.pendO,
+          conZpm:!!ST.pendZ, area:res};
 }
 function resumen(a){
   var p=[];
@@ -1696,29 +1772,33 @@ function resumen(a){
   if(a.conMov) p.push(a.nuevos.toLocaleString("en-US")+" movimientos nuevos, historial en "+
     a.nd.mov.length.toLocaleString("en-US"));
   if(a.conOrd) p.push(Object.keys(a.nd.ordenes).length.toLocaleString("en-US")+" órdenes conocidas");
+  if(a.conZpm) p.push(Object.keys(a.nd.padres).length.toLocaleString("en-US")+" órdenes con ODM padre");
   if(a.area&&a.area.porAlmacen) p.push(a.area.porAlmacen.toLocaleString("en-US")+" por almacén");
   if(a.conStock) p.push("evolutivo con "+Object.keys(a.nd.hist).length+" cortes");
   if(a.area) p.push("área resuelta en "+(a.nd.mov.length-a.area.sin).toLocaleString("en-US")+
     " de "+a.nd.mov.length.toLocaleString("en-US")+" movimientos");
   return p.join(" · ");
 }
-function datosComoArchivos(nd){
+/* padres.json solo viaja cuando se cargó un ZPM010: publicar stock o movimientos no lo toca */
+function datosComoArchivos(nd, conPadres){
   var base={meta:nd.meta, mats:nd.mats, stock:nd.stock, cfg:nd.cfg, hist:nd.hist, histT:nd.histT};
   base.meta.movRows=nd.mov.length;
-  return { "base.json":JSON.stringify(base),
-           "mov.json":JSON.stringify(nd.mov),
-           "areas.json":JSON.stringify({ordenes:nd.ordenes, areaDoc:nd.areaDoc}) };
+  var f={ "base.json":JSON.stringify(base),
+          "mov.json":JSON.stringify(nd.mov),
+          "areas.json":JSON.stringify({ordenes:nd.ordenes, areaDoc:nd.areaDoc}) };
+  if(conPadres) f["padres.json"]=JSON.stringify({padres:nd.padres});
+  return f;
 }
 function aplicar(a){
-  D=a.nd; ST.pendS=null; ST.pendM=null; ST.pendO=null;
-  $("#fileS").value=""; $("#fileM").value=""; $("#fileO").value="";
+  D=a.nd; ST.pendS=null; ST.pendM=null; ST.pendO=null; ST.pendZ=null;
+  $("#fileS").value=""; $("#fileM").value=""; $("#fileO").value=""; $("#fileZ").value="";
   state("#stS","Sin archivo seleccionado."); state("#stM","Sin archivo seleccionado.");
-  state("#stO","Sin archivo seleccionado.");
+  state("#stO","Sin archivo seleccionado."); state("#stZ","Sin archivo seleccionado.");
   paint(); pubReady();
 }
 
 $("#btnPub").addEventListener("click",async function(){
-  if(!ST.pendS&&!ST.pendM&&!ST.pendO) return;
+  if(!ST.pendS&&!ST.pendM&&!ST.pendO&&!ST.pendZ) return;
   this.disabled=true; $("#btnLocal").disabled=true; $("#pubMsg").classList.add("hide"); bar(8);
   var a=null;
   try{
@@ -1729,7 +1809,7 @@ $("#btnPub").addEventListener("click",async function(){
     /* alojada: si hay conexión con GitHub se sube sola; si no, se descargan los archivos */
     if(!ST.art){
       await noRetroceder(a.nd);
-      var archivos=datosComoArchivos(a.nd);
+      var archivos=datosComoArchivos(a.nd, a.conZpm);
       var c=ghCfg();
       if(ghListo(c)){
         var sha=await ghPublicar(c, archivos,
@@ -1743,8 +1823,10 @@ $("#btnPub").addEventListener("click",async function(){
       await bajar("base.json", archivos["base.json"], "application/json"); bar(55);
       await bajar("mov.json", archivos["mov.json"], "application/json"); bar(80);
       await bajar("areas.json", archivos["areas.json"], "application/json");
+      if(archivos["padres.json"]) await bajar("padres.json", archivos["padres.json"], "application/json");
       aplicar(a); bar(100);
-      pmsg("Listos base.json, mov.json y areas.json con "+resumen(a)+". Súbelos a la carpeta data/ del "+
+      pmsg("Listos base.json, mov.json y areas.json"+(archivos["padres.json"]?" (y padres.json)":"")+
+        " con "+resumen(a)+". Súbelos a la carpeta data/ del "+
         "repositorio, reemplazando los que están. Si configuras la publicación automática arriba, "+
         "este botón los sube solo.","good");
       return;
@@ -1773,9 +1855,10 @@ $("#btnPub").addEventListener("click",async function(){
 });
 
 $("#btnLocal").addEventListener("click",function(){
-  if(!ST.pendS&&!ST.pendM) return;
+  if(!ST.pendS&&!ST.pendM&&!ST.pendZ) return;
   conMov(function(){
-    var a=armar(); aplicar(a);
+    try{ var a=armar(); }catch(e){ pmsg("No se pudo aplicar: "+((e&&e.message)||"error")+".","bad"); return; }
+    aplicar(a);
     pmsg("Aplicado en tu pantalla: "+resumen(a)+". Nadie más lo ve hasta que se publique.","good");
   });
 });
@@ -1848,19 +1931,20 @@ function matAOA(){
 }
 function movAOA(){
   var aoa=[["Documento","Fecha","Clase","Texto clase","Centro","Almacen","Area","Material","Descripcion","UM",
-            "Cantidad","Importe","Orden","Usuario","Referencia","Texto cabecera"]];
+            "Cantidad","Importe","Orden","ODM Padre","Usuario","Referencia","Texto cabecera"]];
   D.mov.forEach(function(r){
     aoa.push([r[M_DOC],r[M_FEC],r[M_CLS],r[M_TCL],r[M_CEN],r[M_ALM],r[M_ARE],r[M_MAT],desc(r[M_MAT]),r[M_UM],
-              r[M_CTD],r[M_IMP],r[M_ORD],r[M_USR],r[M_REF],r[M_TXT]]);
+              r[M_CTD],r[M_IMP],r[M_ORD],padreDe(r[M_ORD]),r[M_USR],r[M_REF],r[M_TXT]]);
   });
   return aoa;
 }
 function movHAOA(){
   var aoa=[["Documento","Fecha","Clase","Texto clase","Centro","Almacen","Area","Material","Descripcion","UM",
-            "Cantidad","Importe","Orden","Usuario","Referencia + LCL","Texto cabecera","Area original","Tipo instalacion"]];
+            "Cantidad","Importe","Orden","ODM Padre","Usuario","Referencia + LCL","Texto cabecera","Area original",
+            "Tipo instalacion"]];
   D.movH.forEach(function(r){
     aoa.push([r[M_DOC],r[M_FEC],r[M_CLS],r[M_TCL],r[M_CEN],r[M_ALM],r[M_ARE],r[M_MAT],desc(r[M_MAT]),r[M_UM],
-              r[M_CTD],r[M_IMP],r[M_ORD],r[M_USR],r[M_REF],r[M_TXT],r[H_AOR]||"",r[H_TIP]||""]);
+              r[M_CTD],r[M_IMP],r[M_ORD],padreDe(r[M_ORD]),r[M_USR],r[M_REF],r[M_TXT],r[H_AOR]||"",r[H_TIP]||""]);
   });
   return aoa;
 }
@@ -1879,7 +1963,7 @@ $("#expXlsx").addEventListener("click",async function(){
     X.utils.book_append_sheet(wb,h2,"Base de materiales");
     var h3=X.utils.aoa_to_sheet(movAOA());
     h3["!cols"]=[{wch:14},{wch:12},{wch:8},{wch:20},{wch:8},{wch:10},{wch:14},{wch:12},{wch:44},{wch:6},
-                 {wch:12},{wch:14},{wch:14},{wch:14},{wch:14},{wch:26}];
+                 {wch:12},{wch:14},{wch:14},{wch:14},{wch:14},{wch:14},{wch:26}];
     X.utils.book_append_sheet(wb,h3,"Base de movimientos");
     if(D.movH&&D.movH.length){
       var h4=X.utils.aoa_to_sheet(movHAOA());
@@ -1901,10 +1985,11 @@ $("#expMov").addEventListener("click",function(){ conMov(expMovCSV); });
 function expMovCSV(){
   var tip=conTip();
   var head=["Documento","Fecha","Clase","Texto clase","Centro","Almacen","Area","Material","Descripcion","UM",
-            "Cantidad","Importe","Orden","Usuario","Referencia","Texto cabecera"].concat(tip?["Tipo instalacion"]:[]);
+            "Cantidad","Importe","Orden","ODM Padre","Usuario","Referencia","Texto cabecera"]
+            .concat(tip?["Tipo instalacion"]:[]);
   var body=movFiltered().map(function(r){
     return [r[M_DOC],r[M_FEC],r[M_CLS],r[M_TCL],r[M_CEN],r[M_ALM],r[M_ARE],r[M_MAT],desc(r[M_MAT]),r[M_UM],
-            r[M_CTD].toFixed(3),r[M_IMP].toFixed(2),r[M_ORD],r[M_USR],r[M_REF],r[M_TXT]]
+            r[M_CTD].toFixed(3),r[M_IMP].toFixed(2),r[M_ORD],padreDe(r[M_ORD]),r[M_USR],r[M_REF],r[M_TXT]]
             .concat(tip?[r[H_TIP]||""]:[]);});
   save("base_movimientos_"+(D.meta.stockDate||"")+".csv", csv([head].concat(body)));
 }
@@ -1917,9 +2002,9 @@ function modoAlojado(){
   $("#ghBranch").value=c.branch||"main"; $("#ghToken").value=c.token||"";
   ghEstado();
   $("#cmoPub").innerHTML=
-    "<li><b>Publicar para todos</b> — si configuraste la publicación automática, sube los tres archivos "+
+    "<li><b>Publicar para todos</b> — si configuraste la publicación automática, sube los archivos de datos "+
     "al repositorio en un solo commit y listo. Si no, te los descarga para que los subas a mano.</li>"+
-    "<li><b>Descargar los datos</b> — obtiene los tres JSON sin publicar, por si quieres revisarlos o "+
+    "<li><b>Descargar los datos</b> — obtiene los JSON de datos sin publicar, por si quieres revisarlos o "+
     "guardarlos aparte.</li>"+
     "<li><b>Ver en mi pantalla</b> — aplica los archivos solo para ti, para revisar un corte antes de publicarlo.</li>"+
     "<li><b>Descargar reporte (.html)</b> — se lleva lo que ves en un archivo que abre solo, sin servidor.</li>";
@@ -1955,16 +2040,17 @@ $("#ghTest").addEventListener("click",async function(){
   this.disabled=false;
 });
 $("#btnBajar").addEventListener("click",async function(){
-  if(!ST.pendS&&!ST.pendM&&!ST.pendO) return;
+  if(!ST.pendS&&!ST.pendM&&!ST.pendO&&!ST.pendZ) return;
   this.disabled=true;
   try{
     if(!ST.movListo) await cargarMov();
     if(!ST.areasListo) try{ await cargarAreas(); }catch(e){}
-    var a=armar(), f=datosComoArchivos(a.nd);
+    var a=armar(), f=datosComoArchivos(a.nd, a.conZpm);
     await bajar("base.json", f["base.json"], "application/json");
     await bajar("mov.json", f["mov.json"], "application/json");
     await bajar("areas.json", f["areas.json"], "application/json");
-    pmsg("Descargados los tres archivos con "+resumen(a)+". No se publicó nada todavía.","good");
+    if(f["padres.json"]) await bajar("padres.json", f["padres.json"], "application/json");
+    pmsg("Descargados los archivos de datos con "+resumen(a)+". No se publicó nada todavía.","good");
   }catch(e){ pmsg("No se pudieron generar los archivos: "+((e&&e.message)||"error"),"bad"); }
   this.disabled=false; pubReady();
 });

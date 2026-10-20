@@ -9,11 +9,13 @@ base de datos ni cuenta de ningún servicio.
     data/base.json    corte de stock, descripciones de material y reglas de área
     data/mov.json     historial de movimientos, con su área ya calculada
     data/areas.json   órdenes conocidas e histórico de áreas resueltas
+    data/padres.json  orden -> ODM padre, del export ZPM010 (columna ODM Padre de movimientos)
     data/historico.json  movimientos del SAP anterior (15.05.2023 – 23.04.2026), congelados
     .nojekyll         evita que GitHub Pages procese los archivos
 
-La página carga `data/base.json` al abrir. `data/mov.json` se trae recién cuando alguien entra
-a la ventana de movimientos o descarga el Excel, y `data/areas.json` solo al usar la ingesta.
+La página carga `data/base.json` al abrir. `data/mov.json` (junto con `data/padres.json`) se trae
+recién cuando alguien entra a la ventana de movimientos o descarga el Excel, y `data/areas.json`
+solo al usar la ingesta.
 Por eso el reporte abre rápido por más que crezca el historial.
 
 ## Publicar por primera vez
@@ -81,6 +83,22 @@ Un movimiento cuya orden todavía no aparece en ningún IW39 queda sin área y s
 guión. Se resuelve solo en cuanto se suba un IW39 que la incluya: al publicar se recalcula
 **todo** el historial, no solo lo nuevo.
 
+## La columna ODM Padre
+
+Cruza la Orden de cada movimiento con el export **ZPM010** (columnas *ODM Padre* y *ODM Hija*),
+como un BUSCARV:
+
+- Si la orden es una **ODM hija**, muestra su ODM padre. La fila del ZPM010 sin hija es la propia
+  orden padre, que apunta a sí misma.
+- Si la orden no está en ningún ZPM010 cargado, queda con guión.
+- Se ve en la tabla de movimientos (también sirve el buscador), en el CSV de lo filtrado y en el
+  Excel general. No se guarda dentro de `mov.json`: se calcula al mostrar, así un ZPM010 nuevo
+  corrige también los movimientos viejos.
+- Se carga en la ingesta, tarjeta **Export ZPM010 · ODM padre**. **Acumula**: agrega las órdenes
+  nuevas y actualiza las que cambiaron de padre; las que ya no vienen se conservan.
+- `data/padres.json` solo se commitea cuando se carga un ZPM010; publicar stock o movimientos no
+  lo toca.
+
 ## Reglas de la ingesta
 
 - Se descarta toda fila cuyo código de material empiece con **S** (materiales de servicio),
@@ -97,6 +115,8 @@ guión. Se resuelve solo en cuanto se suba un IW39 que la incluya: al publicar s
 Unidad medida base · Libre utilización · Valor libre util.
 
 **Órdenes (IW39):** Orden · Texto breve · Pto.tbjo.responsable
+
+**ZPM010 (ODM padre):** ODM Padre · ODM Hija
 
 **Movimientos:** Documento material · Fecha contabiliz. · Clase de movimiento · Centro ·
 Almacén · Material · Descripción material · Un.medida de entrada · Ctd.en UM entrada ·
