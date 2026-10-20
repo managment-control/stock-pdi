@@ -90,7 +90,9 @@ como un BUSCARV:
 
 - Si la orden es una **ODM hija**, muestra su ODM padre. La fila del ZPM010 sin hija es la propia
   orden padre, que apunta a sí misma.
-- Si la orden no está en ningún ZPM010 cargado, queda con guión.
+- **Solo aplica a las ODM que empiezan con 8.** Las demás órdenes, y todo el histórico del SAP
+  anterior (otra numeración), muestran **No aplica** — también en el CSV y el Excel.
+- Si una ODM 8… no está en ningún ZPM010 cargado, queda con guión.
 - Se ve en la tabla de movimientos (también sirve el buscador), en el CSV de lo filtrado y en el
   Excel general. No se guarda dentro de `mov.json`: se calcula al mostrar, así un ZPM010 nuevo
   corrige también los movimientos viejos.
